@@ -18,6 +18,7 @@ module.exports = (robot) ->
   isOut = process.env.HUBOT_WORMHOLE_OUT
 
   if isIn == 'yes'
+    localToGlobal = {}
     robot.hear /.*/i, (res) ->
       amqp = require('amqplib')
       amqp.connect("amqp://#{user}:#{pass}@#{url}")
@@ -28,7 +29,10 @@ module.exports = (robot) ->
                        res.message.user.profile.real_name ||
                        res.message.user.name
             icon = res.message.user.profile.image_192
-            payload = { username: username, icon_url: icon, text: res.message.text, as_user: false }
+            randomID = Math.floor(Math.random() * 10 * 1000 * 1000)
+            messageID = res.message.id
+            localToGlobal["#{messageID}"] = randomID
+            payload = { id: randomID, message: { username: username, icon_url: icon, text: res.message.text, as_user: false } }
 
             robot.adapter.client.web.conversations.info(res.message.room)
               .then((response) ->
@@ -42,6 +46,7 @@ module.exports = (robot) ->
         )
 
   if isOut == 'yes'
+    globalToLocal = {}
     amqp_cb = require('amqplib/callback_api')
     amqp_cb.connect("amqp://#{user}:#{pass}@#{url}", (err, conn) ->
       room = process.env.HUBOT_EXHALE_ROOM || "wormhole"
@@ -65,8 +70,13 @@ module.exports = (robot) ->
 
                 ch.consume(q.queue, (msg) ->
                   room = msg.fields.routingKey.split('.').pop()
-                  message = JSON.parse(msg.content.toString())
-                  robot.send {room: room}, message
+                  payload = JSON.parse(msg.content.toString())
+                  randomID = payload.id
+                  message = payload.message
+                  ret = robot.send {room: room}, message
+                  messageID = ret.ok && ret.ts
+                  if messageID !== false
+                    globalToLocal["#{randomID}"] = messageID
                   ch.ack(msg)
                 )
             )
